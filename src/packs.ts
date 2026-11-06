@@ -80,7 +80,8 @@ export function sanitizeDevice(raw: unknown, where: string): { preset: PackDevic
   if (accel !== undefined) p.accel = accel;
   const junction = numIn(r.junction, 0.001, 1);
   if (junction !== undefined) p.junction = junction;
-  if (r.conn === 'serial' || r.conn === 'tcp' || r.conn === 'ws') p.conn = r.conn;
+  if (r.conn === 'serial' || r.conn === 'tcp' || r.conn === 'ws' || r.conn === 'udp') p.conn = r.conn;
+  if (r.ruidaOrigin === 'tr' || r.ruidaOrigin === 'tl' || r.ruidaOrigin === 'br' || r.ruidaOrigin === 'bl') p.ruidaOrigin = r.ruidaOrigin;
   const tcpPort = numIn(r.tcpPort, 1, 65535);
   if (tcpPort !== undefined) p.tcpPort = Math.round(tcpPort);
   const wsPort = numIn(r.wsPort, 1, 65535);

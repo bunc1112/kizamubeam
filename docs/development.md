@@ -108,6 +108,9 @@ UI texts are written in German in the code inside `t('…')` (placeholders in cu
 | `src-tauri/src/stream.rs` | G-code streaming with character counting, status queries, hold/reset (with tests: `cargo test`) |
 | `src-tauri/src/machine.rs` | Serial (serialport), Telnet (TCP) and WebSocket, events to the window |
 | `src-tauri/src/ws.rs` | WebSocket to the controller (tungstenite) as a byte stream for streaming, with a test against a simulated FluidNC |
+| `src/ruidaSettings.ts`, `src/ruidaDialog.ts` | Ruida (CO2) controllers: catalog of known memory addresses with units, conversion, backups; the “Ruida controller” settings window. Tests: `npm run test:ruida` |
+| `src-tauri/src/ruida.rs` | Ruida driver: UDP (ports 50200/40200) and USB transports, key detection, status polling as GRBL-style status lines, jog/home/origin, job upload, settings read/write, `.rd` save (with tests against a simulated controller, including real UDP over 127.0.0.1) |
+| `src-tauri/core/src/ruida.rs` | Ruida protocol without Tauri: byte scrambling, 7-bit numbers, corner mapping, G-code subset → RD job, packets with checksum and ACK/NAK session. Tests: `cargo test -p kizamubeam-core`; `npm run test:core` also checks that KizamuBeam's own Ruida G-code is accepted |
 | `src-tauri/src/fluid.rs` | FluidNC web interface over plain HTTP: upload to SD card/flash, search on the local network (with tests against a simulated web interface) |
 | `src-tauri/src/agent.rs` | MCP server (Streamable HTTP on 127.0.0.1, token, levels) and stdio bridge `--mcp-stdio` |
 | `src-tauri/core/` | Computation core without UI (`kizamubeam-core`): image processing and dithering, image raster lines, writing G-code. Computes the same as `images.ts`/`gcode.ts`; the desktop app uses it, the browser uses the TypeScript version. Comparison test: `npm run test:core` |

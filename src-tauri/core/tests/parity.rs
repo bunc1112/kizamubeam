@@ -1,7 +1,7 @@
 //! Vergleich mit der TypeScript-Fassung: `npm run test:core` erzeugt tests/fixtures/parity.json aus
 //! src/images.ts und src/gcode.ts und startet danach diese Tests.
 
-use kizamubeam_core::{gcode, raster};
+use kizamubeam_core::{gcode, raster, ruida};
 use serde_json::Value;
 
 fn fixtures() -> Value {
@@ -107,5 +107,32 @@ fn packed_gcode_matches() {
         let want: Vec<&str> = c["lines"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
         assert_eq!(lines, want);
         assert_eq!(times, f64s(&c["times"]));
+    }
+}
+
+/// G-Code, den KizamuBeam für ein Ruida-Gerät schreibt, muss der Ruida-Kern ganz annehmen
+#[test]
+fn ruida_accepts_kizamubeam_gcode() {
+    let f = fixtures();
+    for c in f["ruida"].as_array().unwrap() {
+        let name = c["name"].as_str().unwrap();
+        let lines: Vec<String> = c["lines"].as_array().unwrap().iter().map(|l| l.as_str().unwrap().to_string()).collect();
+        let o: ruida::Options = serde_json::from_value(c["options"].clone()).unwrap();
+        let r = ruida::parse_gcode(&lines, &o, (0.0, 0.0)).and_then(|mv| {
+            assert!(!mv.is_empty(), "{name}: keine Bewegungen");
+            ruida::encode_job(&mv, &o, Some((0.0, 0.0)))
+        });
+        if c["reject"].as_bool().unwrap_or(false) {
+            assert!(r.is_err(), "{name}: sollte abgelehnt werden");
+            continue;
+        }
+        let job = r.unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!(job.data.last(), Some(&0xD7), "{name}: Dateiende");
+        let cuts = job.starts.iter().filter(|&&s| matches!(job.data[s as usize], 0xA8..=0xAB)).count();
+        if name.starts_with("frame") && !name.contains("laser") {
+            assert_eq!(cuts, 0, "{name}: Rahmen ohne Laser schneidet nicht");
+        } else {
+            assert!(cuts > 0, "{name}: keine Schnitte");
+        }
     }
 }

@@ -60,7 +60,7 @@ The **3D view** puts parts together exactly as they will be assembled, with mate
 </p>
 
 ### Run your laser
-Works with **FluidNC, GRBL, grblHAL, Marlin and Smoothieware**, over USB or Wi-Fi. A setup wizard detects your controller, checks its settings and runs a first test job. Frame, start, pause, adjust power and speed while lasering, start from anywhere in the job. Before every job, KizamuBeam checks that everything fits on the bed. Rotary attachments, a motorized Z axis and air assist are supported.
+Works with **FluidNC, GRBL, grblHAL, Marlin, Smoothieware and Ruida (CO2)**, over USB or Wi-Fi. A setup wizard detects your controller, checks its settings and runs a first test job. Frame, start, pause, adjust power and speed while lasering, start from anywhere in the job. Before every job, KizamuBeam checks that everything fits on the bed. Rotary attachments, a motorized Z axis and air assist are supported.
 
 ### Get the settings right
 A material library stores proven settings. Material tests, focus tests and a fit calibration help you find them, and a test can be evaluated straight from a photo. Per layer: multiple passes, sub-layers, tabs, kerf compensation, perforation, lead-ins and power ramps.

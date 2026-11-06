@@ -4,7 +4,7 @@
 import './core-fixtures-env';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { applyAdjust, dither, resample } from '../src/images';
-import { DEFAULT_ROTARY, estimate, FIRMWARES, gcodeLines, Moves, newDevice, outAxis, packMoves, rotaryMoves, scanLines, zInserts } from '../src/gcode';
+import { DEFAULT_ROTARY, estimate, FIRMWARES, frameGCode, gcodeLines, Job, Moves, newDevice, outAxis, packMoves, prepareGCode, rotaryMoves, ruidaConnect, scanLines, writeGCode, zInserts } from '../src/gcode';
 import { defaultImageLayer, inv, ImageAdjust, Mat, mul } from '../src/model';
 
 // Reproduzierbare Zufallszahlen
@@ -80,7 +80,35 @@ function gcodeCase(fw: 'fluidnc' | 'smoothie', axis?: 'A', withZ = false) {
   };
 }
 
+// Ruida: G-Code, wie KizamuBeam ihn für ein Ruida-Gerät schreibt (Job, Rahmen mit und ohne Laser, Rotary am Y-Anschluss).
+// Der Rust-Kern (kizamubeam_core::ruida) muss ihn vollständig annehmen und in einen Ruida-Auftrag übersetzen.
+async function ruidaCases() {
+  const d = newDevice({ fw: 'ruida', bedW: 600, bedH: 400 });
+  const mv = new Moves(0, 0);
+  for (let i = 0; i < 400; i++) {
+    const x = 50 + (i % 40) * 3.7,
+      y = 30 + Math.floor(i / 40) * 11.3;
+    mv.push(x, y, 0, 0, 0);
+    mv.push(x + 2.5, y + 0.4, i % 3 ? 1200 : 600, [0.25, 0.6, 1][i % 3], i < 200 ? 0 : 1);
+  }
+  const job: Job = { moves: mv, bounds: { x0: 50, y0: 30, x1: 200, y1: 140 }, travel: { x0: 50, y0: 30, x1: 200, y1: 140 }, hull: [], warnings: [], offset: { x: 0, y: 0 }, air: [1] };
+  const est = estimate(mv, d);
+  const rot = { ...d, rotary: { ...DEFAULT_ROTARY, enabled: true, axis: 'Y' as const, rollerDiam: 30 } };
+  return [
+    { name: 'job', options: ruidaConnect(d), lines: writeGCode(job, d, est).lines },
+    { name: 'job (prepareGCode)', options: ruidaConnect(d), lines: (await prepareGCode(job, d, est)).lines! },
+    { name: 'frame', options: ruidaConnect(d), lines: frameGCode(job, d, false)! },
+    { name: 'frame with laser', options: ruidaConnect(d), lines: frameGCode(job, { ...d, frameLaser: true, framePower: 12 }, true)! },
+    // Drehachse am Y-Anschluss: Y in Achseinheiten; passt der Job nicht in den Y-Fahrbereich, wird er abgelehnt (nie gekürzt)
+    { name: 'rotary on Y, too tall', options: ruidaConnect(rot), lines: writeGCode(job, rot, estimate(mv, rot)).lines, reject: true },
+    { name: 'rotary on Y', options: ruidaConnect({ ...rot, bedH: 1200 }), lines: writeGCode(job, rot, estimate(mv, rot)).lines },
+    // Ausgänge im Job gibt es bei Ruida nicht: muss abgelehnt werden
+    { name: 'outputs', options: ruidaConnect(d), lines: writeGCode(job, { ...d, jobOutputs: [1] }, est).lines, reject: true },
+  ];
+}
+
 const out = {
+  ruida: await ruidaCases(),
   src: { w: SW, h: SH, v: arr(src) },
   down: arr(down),
   up: arr(up),

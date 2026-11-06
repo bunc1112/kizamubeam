@@ -36,6 +36,7 @@
     "test:catalog": "node scripts/run-ts.mjs scripts/catalog-test.ts",
     "test:library": "node scripts/run-ts.mjs scripts/library-test.ts",
     "test:fluidnc": "node scripts/run-ts.mjs scripts/fluidnc-test.ts",
+    "test:ruida": "node scripts/run-ts.mjs scripts/ruida-test.ts",
     "test:notes": "node scripts/run-ts.mjs scripts/notes-test.ts",
     "test:guides": "node scripts/run-ts.mjs scripts/guides-test.ts",
     "test:fonts": "node scripts/run-ts.mjs scripts/fonts-test.ts",

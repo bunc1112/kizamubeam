@@ -108,6 +108,9 @@ Texte stehen im Code auf Deutsch in `t('…')` (Platzhalter in geschweiften Klam
 | `src-tauri/src/stream.rs` | G-Code-Übertragung mit Zeichenzählung, Statusabfrage, Halt/Reset (mit Tests: `cargo test`) |
 | `src-tauri/src/machine.rs` | Seriell (serialport), Telnet (TCP) und WebSocket, Ereignisse an das Fenster |
 | `src-tauri/src/ws.rs` | WebSocket zur Steuerung (tungstenite) als Byte-Strom für die Übertragung, mit Test gegen ein nachgebildetes FluidNC |
+| `src/ruidaSettings.ts`, `src/ruidaDialog.ts` | Ruida-Steuerungen (CO2): Katalog der bekannten Speicheradressen mit Einheiten, Umrechnung, Sicherungen; Fenster „Ruida-Steuerung“. Tests: `npm run test:ruida` |
+| `src-tauri/src/ruida.rs` | Ruida-Treiber: UDP (Ports 50200/40200) und USB, Schlüssel erkennen, Zustand abfragen und als GRBL-Statuszeile melden, Bewegen/Home/Ursprung, Auftrag senden, Einstellungen lesen/schreiben, `.rd` speichern (mit Tests gegen eine nachgebildete Steuerung, auch echtes UDP über 127.0.0.1) |
+| `src-tauri/core/src/ruida.rs` | Ruida-Protokoll ohne Tauri: Verwürfeln, 7-Bit-Zahlen, Ecken-Umrechnung, G-Code-Teilmenge → RD-Auftrag, Pakete mit Prüfsumme und ACK/NAK-Sitzung. Tests: `cargo test -p kizamubeam-core`; `npm run test:core` prüft auch, dass KizamuBeams eigener Ruida-G-Code angenommen wird |
 | `src-tauri/src/fluid.rs` | Weboberfläche von FluidNC über einfaches HTTP: Hochladen auf SD-Karte/Flash, Suche im lokalen Netz (mit Tests gegen eine nachgebildete Weboberfläche) |
 | `src-tauri/src/agent.rs` | MCP-Server (Streamable HTTP auf 127.0.0.1, Token, Stufen) und stdio-Brücke `--mcp-stdio` |
 | `src-tauri/core/` | Rechenkern ohne Oberfläche (`kizamubeam-core`): Bildverarbeitung und Dithering, Rasterzeilen der Bilder, G-Code schreiben. Rechnet wie `images.ts`/`gcode.ts`, die Desktop-App nutzt ihn, der Browser die TypeScript-Fassung. Vergleichstest: `npm run test:core` |

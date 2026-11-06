@@ -1,6 +1,6 @@
 // Verbindung zur Maschine (FluidNC/GRBL). Die eigentliche Kommunikation läuft im Rust-Kern (src-tauri/src/machine.rs);
 // hier liegen Zustand, Statusauswertung und die Befehle für die Oberfläche.
-import { Device, FIRMWARES, PreparedGCode } from './gcode';
+import { Device, FIRMWARES, PreparedGCode, ruidaConnect } from './gcode';
 import { t, tBackend } from './i18n';
 import { configText, FluidFs, OVERRIDE, overrideSteps, parseConfigFile, runCmd } from './fluidnc';
 import { parseFluidConfig } from './setup';
@@ -62,6 +62,14 @@ export interface FoundController {
 export interface PortInfo {
   name: string;
   description: string;
+}
+
+/** Gelesener Wert einer Ruida-Speicheradresse */
+export interface RuidaValue {
+  addr: number;
+  value: number | null;
+  text: string;
+  error: string | null;
 }
 
 /** Klartext für FluidNC-/GRBL-Alarme und häufige Fehler */
@@ -174,6 +182,8 @@ class Machine {
   private wco: WorkOffset = { v: [0, 0, 0], known: false };
   /** Firmware der aktuellen Verbindung */
   fw = FIRMWARES.fluidnc;
+  /** Verbunden mit einer Ruida-Steuerung (eigener Treiber, Einstellungen über ruidaRead/ruidaWrite) */
+  isRuida = false;
   /** Konfiguration der verbundenen FluidNC-Steuerung (nach dem Verbinden still gelesen); null = unbekannt */
   fluid: FluidConfig | null = null;
   /** Job, der auf der Steuerung von SD-Karte oder Flash läuft (FluidNC meldet SD: im Status) */
@@ -241,6 +251,8 @@ class Machine {
   }
 
   private onLine(line: string) {
+    // Ruida-Treiber: Fehlertexte kommen aus dem Rust-Teil (deutsch)
+    if (this.isRuida && line.startsWith('error: ')) line = `error: ${tBackend(line.slice(7))}`;
     // Marlin: Antwort auf M114 („X:10.00 Y:20.00 Z:0.00 E:0.00 Count …“)
     const m114 = /^X:(-?[\d.]+)\s*Y:(-?[\d.]+)(?:\s*Z:(-?[\d.]+))?/.exec(line);
     if (m114) {
@@ -278,14 +290,19 @@ class Machine {
     try {
       await this.listen();
       const { invoke } = await import('@tauri-apps/api/core');
-      const netPort = d.conn === 'ws' ? d.wsPort : d.tcpPort;
-      const where = d.conn === 'serial' ? d.port : `${d.conn === 'ws' ? 'ws://' : ''}${d.host}:${netPort}`;
+      const ruida = d.fw === 'ruida';
+      // Ruida: Ethernet (UDP, feste Ports 50200/40200) oder USB; Telnet/WebSocket gibt es dort nicht
+      const conn = ruida && d.conn !== 'serial' ? 'udp' : d.conn;
+      const netPort = conn === 'ws' ? d.wsPort : d.tcpPort;
+      const where = conn === 'serial' ? d.port : conn === 'udp' ? `${d.host} (UDP)` : `${conn === 'ws' ? 'ws://' : ''}${d.host}:${netPort}`;
       this.log(t('Verbinde mit {where} …', { where }));
       const fw = FIRMWARES[d.fw];
       this.fw = fw;
+      this.isRuida = ruida;
       await invoke('machine_connect', {
-        kind: d.conn, port: d.port, baud: d.baud, host: d.host, tcpPort: netPort,
+        kind: conn, port: d.port, baud: d.baud, host: d.host, tcpPort: netPort,
         sync: fw.sync, realtime: fw.realtime, poll: fw.poll, rxBuffer: d.rxBuffer || 127,
+        ruida: ruida ? ruidaConnect(d) : null,
       });
       this.connected = true;
       this.where = where;
@@ -491,11 +508,55 @@ class Machine {
     this.log(t('Gestoppt.'), 'info');
   }
 
+  /** Ruida-Speicheradressen lesen (Einstellungen, Zähler) */
+  async ruidaRead(addrs: number[]): Promise<RuidaValue[]> {
+    if (!this.connected || !this.isRuida) throw new Error(t('Keine Ruida-Steuerung verbunden.'));
+    const { invoke } = await import('@tauri-apps/api/core');
+    try {
+      return await invoke<RuidaValue[]>('ruida_read', { addrs });
+    } catch (e) {
+      throw new Error(tBackend(String(e)));
+    }
+  }
+
+  /** Ruida-Einstellung schreiben; liefert den zurückgelesenen Wert */
+  async ruidaWrite(addr: number, value: number): Promise<number> {
+    if (!this.connected || !this.isRuida) throw new Error(t('Keine Ruida-Steuerung verbunden.'));
+    const { invoke } = await import('@tauri-apps/api/core');
+    try {
+      return await invoke<number>('ruida_write', { addr, value });
+    } catch (e) {
+      throw new Error(tBackend(String(e)));
+    }
+  }
+
+  /** Ruida-Aktion: homeXY, homeZ, homeU, focusZ (bewegt die Maschine, nur auf Klick des Benutzers) */
+  async ruidaAction(action: 'homeXY' | 'homeZ' | 'homeU' | 'focusZ') {
+    if (!this.connected || !this.isRuida) return this.log(t('Keine Ruida-Steuerung verbunden.'), 'error');
+    const { invoke } = await import('@tauri-apps/api/core');
+    try {
+      await invoke('ruida_action', { action });
+    } catch (e) {
+      this.log(tBackend(String(e)), 'error');
+    }
+  }
+
+  /** Anteil des laufenden Jobs 0 … 1: bestätigte Zeilen; bei Ruida nach der geschätzten Zeit (höchstens 99 %, bis die Steuerung fertig meldet) */
+  jobFraction(): number {
+    const p = this.progress;
+    if (!p || !p.total) return 0;
+    const t = this.jobTimes;
+    if (this.isRuida && t && t.length && t[t.length - 1] > 0) return Math.min(0.99, (performance.now() - this.jobStarted) / 1000 / t[t.length - 1]);
+    return p.acked / p.total;
+  }
+
   /** Geschätzte Restzeit des laufenden Jobs in Sekunden */
   remaining(): number | null {
     const p = this.progress,
       t = this.jobTimes;
     if (!p || !t || !t.length) return null;
+    // Ruida lädt den ganzen Auftrag in die Steuerung; die Bestätigungen sagen nichts über den Fortschritt
+    if (this.isRuida) return Math.max(0, t[t.length - 1] - (performance.now() - this.jobStarted) / 1000);
     const i = Math.min(t.length - 1, Math.max(0, p.acked - 1));
     return Math.max(0, t[t.length - 1] - (p.acked ? t[i] : 0));
   }

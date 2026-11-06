@@ -22,6 +22,7 @@ These instructions apply to AI coding agents working in this repository. Read [C
 | `src/nest.ts`, `src/editor/nest.ts` | Nesting algorithm and placement in documents |
 | `src/generators/`, `src/model3d/`, `src/view3d/` | Parametric parts, imported 3D geometry and assembly preview |
 | `src/gcode.ts`, `src/machine.ts`, `src/laser.ts` | Job generation, machine communication and control UI |
+| `src/ruidaSettings.ts`, `src/ruidaDialog.ts`, `src-tauri/src/ruida.rs`, `src-tauri/core/src/ruida.rs` | Ruida (CO2) controllers: settings catalog and window, UDP/USB driver, protocol and RD job format |
 | `src/importers.ts`, `src/lbrn.ts`, `src/pdfimport.ts` | File imports and compatibility |
 | `src/locales/`, `src/i18n.ts` | Translations and UI strings |
 | `src-tauri/`, `src-tauri/core/` | Main application native backend and Rust processing core |

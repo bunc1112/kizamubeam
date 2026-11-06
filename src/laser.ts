@@ -6,7 +6,7 @@ import { saveText } from './files';
 import { native } from './native';
 import {
   anchorOf, BedCheck, Box, buildJob, burns, checkBed, DEFAULT_ROTARY, Device, estimate, Firmware, FIRMWARES, formatDuration, frameGCode, Job, jogLines, jogToLines, loadDevices, Moves, newDevice,
-  prepareGCode, Rotary, RotaryAxis, rotaryCirc, rotaryOn, rotaryTestLines, sameMoves, saveDevices, StartFrom, startHere,
+  prepareGCode, Rotary, RotaryAxis, rotaryCirc, rotaryOn, rotaryTestLines, sameMoves, saveDevices, StartFrom, startHere, ruidaConnect, RuidaOrigin,
 } from './gcode';
 import { isTauri, machine, PortInfo } from './machine';
 import type { PreparedGCode } from './gcode';
@@ -302,11 +302,33 @@ export async function saveGCode(ed: Editor, src?: JobSource) {
   if (nothingToDo(job)) return;
   if (device.startFrom === 'current') notify(t('Hinweis: Die Datei enthält die aktuelle Laserposition als Startpunkt.'));
   const g = await prepareGCode(job, device, estimate(job.moves, device), src?.name);
+  if (device.fw === 'ruida') return saveRd(ed, g, src);
   const name = src ? `${src.name.toLowerCase().replace(/[^a-z0-9äöüß]+/g, '-')}.gcode` : 'projekt.gcode';
   const saved = g.lines
     ? await saveText(name, 'G-Code', 'gcode', 'text/plain', g.lines.join('\n') + '\n')
     : (await native<string | null>('gcode_save', { id: g.id, defaultName: name, filterName: 'G-Code' })) !== null;
   if (saved && !src) ed.afterJob();
+}
+
+/**
+ * Ruida: Job als .rd-Datei speichern (z. B. für den USB-Stick an der Steuerung). Die Datei ist in Maschinenkoordinaten;
+ * mit Benutzer-Ursprung muss die Steuerung verbunden sein, damit KizamuBeam den Ursprung kennt.
+ */
+async function saveRd(ed: Editor, g: PreparedGCode, src?: JobSource) {
+  if (!isTauri()) return notify(t('RD-Dateien lassen sich nur in der Desktop-App speichern.'), true);
+  const wco = machine.workOffset();
+  if (device.startFrom === 'user' && !wco) return notify(t('Für eine RD-Datei mit Benutzer-Ursprung erst mit der Steuerung verbinden und den Ursprung setzen.'), true);
+  const name = src ? `${src.name.toLowerCase().replace(/[^a-z0-9äöüß]+/g, '-')}.rd` : 'projekt.rd';
+  const pos = machine.status.mpos;
+  try {
+    const saved = await native<string | null>('ruida_save', {
+      id: g.id, lines: g.lines, connect: ruidaConnect(device), offset: wco ? [wco.x, wco.y] : [0, 0],
+      start: pos ? [pos[0], pos[1]] : null, defaultName: name, filterName: t('Ruida-Datei'),
+    });
+    if (saved !== null && !src) ed.afterJob();
+  } catch (e) {
+    notify(tBackend(String(e)), true);
+  }
 }
 
 /** Job und Zeitschätzung des Dokuments ohne Ausgabe (für KI-Agenten) */
@@ -496,6 +518,7 @@ function laserTab(ed: Editor): HTMLElement {
   let ports: PortInfo[] = [];
   const NET = '__net__';
   const NET_WS = '__ws__';
+  const NET_UDP = '__udp__';
   const fillPorts = () => {
     portSel.textContent = '';
     const names = ports.map((p) => p.name);
@@ -505,12 +528,18 @@ function laserTab(ed: Editor): HTMLElement {
       portSel.append(h('option', { value: n }, p?.description ? `${n} (${p.description})` : n));
     }
     if (!names.length) portSel.append(h('option', { value: '', disabled: true }, t('Keine serielle Schnittstelle gefunden')));
-    portSel.append(h('option', { value: NET }, t('WLAN: {address}', { address: `${device.host}:${device.tcpPort}` })));
-    portSel.append(h('option', { value: NET_WS }, t('WLAN (WebSocket): {address}', { address: `${device.host}:${device.wsPort}` })));
-    portSel.value = device.conn === 'tcp' ? NET : device.conn === 'ws' ? NET_WS : device.port || names[0] || NET;
+    // Ruida: Ethernet über UDP statt Telnet/WebSocket
+    if (device.fw === 'ruida') portSel.append(h('option', { value: NET_UDP }, t('Ethernet (Ruida): {address}', { address: device.host || '?' })));
+    else {
+      portSel.append(h('option', { value: NET }, t('WLAN: {address}', { address: `${device.host}:${device.tcpPort}` })));
+      portSel.append(h('option', { value: NET_WS }, t('WLAN (WebSocket): {address}', { address: `${device.host}:${device.wsPort}` })));
+    }
+    const net = device.fw === 'ruida' ? NET_UDP : NET;
+    portSel.value = device.conn === 'tcp' || device.conn === 'udp' ? net : device.conn === 'ws' ? NET_WS : device.port || names[0] || net;
   };
   const applyPortChoice = () => {
-    if (portSel.value === NET) device.conn = 'tcp';
+    if (portSel.value === NET_UDP) device.conn = 'udp';
+    else if (portSel.value === NET) device.conn = 'tcp';
     else if (portSel.value === NET_WS) device.conn = 'ws';
     else if (portSel.value) ((device.conn = 'serial'), (device.port = portSel.value));
     deviceChanged();
@@ -560,7 +589,7 @@ function laserTab(ed: Editor): HTMLElement {
       (bar.firstChild as HTMLElement).style.width = `${(f * 100).toFixed(1)}%`;
       progTxt.textContent = `${Math.floor(f * 100)} % · ${t('läuft auf der Steuerung')} · ${el(stored.started)}`;
     } else if (pr && showProg) {
-      const f = pr.total ? pr.acked / pr.total : 0;
+      const f = machine.jobFraction();
       (bar.firstChild as HTMLElement).style.width = `${(f * 100).toFixed(1)}%`;
       const rest = machine.remaining();
       progTxt.textContent = `${Math.floor(f * 100)} % · ${el(machine.jobStarted)}${rest !== null ? t(' · noch etwa {rest}', { rest: formatDuration(rest) }) : ''}${pr.errors ? tn(' · {n} Fehler', ' · {n} Fehler', pr.errors) : ''}`;
@@ -718,6 +747,12 @@ function consoleTab(): HTMLElement {
     quickRow.textContent = '';
     const f = fw();
     if (device.fw === 'marlin') quickRow.append(quick('M115', 'M115', t('Firmware-Version')), quick('M114', 'M114', t('Position')), quick('M503', 'M503', t('Einstellungen anzeigen')));
+    else if (device.fw === 'ruida')
+      quickRow.append(
+        quick(f.home, f.home, t('Referenzfahrt')),
+        quick('$I', '$I', t('Version und Gerät')),
+        h('button', { class: 'btn', title: t('Einstellungen der Ruida-Steuerung lesen und ändern'), onclick: () => import('./ruidaDialog').then((m) => m.openRuidaSettings()) }, t('Einstellungen …')),
+      );
     else {
       if (f.unlock) quickRow.append(quick(f.unlock, f.unlock, t('Entsperren')));
       quickRow.append(quick(f.home, f.home, t('Referenzfahrt')));
@@ -783,6 +818,7 @@ export function openDeviceDialog(ed: Editor, target: Device = device, onDone?: (
     h('option', { value: 'serial', selected: d.conn === 'serial' }, t('USB (seriell)')),
     h('option', { value: 'tcp', selected: d.conn === 'tcp' }, t('WLAN (Telnet)')),
     h('option', { value: 'ws', selected: d.conn === 'ws' }, t('WLAN (WebSocket)')),
+    h('option', { value: 'udp', selected: d.conn === 'udp' }, t('Ethernet (Ruida, UDP)')),
   ));
   // Schnittstelle frei eintragbar (z. B. COM3, /dev/ttyUSB0), erkannte Schnittstellen als Vorschlag
   const portList = h('datalist', { id: `ports-${Math.random().toString(36).slice(2)}` });
@@ -864,6 +900,28 @@ export function openDeviceDialog(ed: Editor, target: Device = device, onDone?: (
     h('button', { class: 'btn small', title: t('config.yaml der verbundenen Steuerung lesen und ändern'), onclick: () => import('./fluidncDialog').then((m) => m.openFluidConfig()) }, t('Konfiguration …')),
     h('button', { class: 'btn small', title: t('Dateien auf SD-Karte und Flash'), onclick: () => import('./fluidncDialog').then((m) => m.openFluidFiles(ed)) }, t('Dateien …')),
   ));
+  head('Ruida');
+  rows.push(h('div', { class: 'note wide' }, t('Für CO2-Laser mit Ruida-Steuerung (RDC6442, RDC6445, RDC6332 …): als Firmware „Ruida“ wählen, Anschluss „Ethernet (Ruida, UDP)“ mit der IP-Adresse der Steuerung (ab Werk meist 192.168.1.100) oder USB. LightBurn und RDWorks dürfen dabei nicht verbunden sein.')));
+  rows.push(h('label', { title: t('Ecke, an die die Steuerung bei der Referenzfahrt fährt; dort ist ihr Nullpunkt') }, t('Nullpunkt der Steuerung')),
+    h('select', { onchange: (e: Event) => (d.ruidaOrigin = (e.target as HTMLSelectElement).value as RuidaOrigin) },
+      h('option', { value: 'tr', selected: d.ruidaOrigin === 'tr' }, t('Oben rechts (üblich)')),
+      h('option', { value: 'tl', selected: d.ruidaOrigin === 'tl' }, t('Oben links')),
+      h('option', { value: 'br', selected: d.ruidaOrigin === 'br' }, t('Unten rechts')),
+      h('option', { value: 'bl', selected: d.ruidaOrigin === 'bl' }, t('Unten links')),
+    ));
+  rows.push(h('label', { title: t('Ruida-Steuerungen verwürfeln jedes Byte mit einem Schlüssel; er hängt von der Baureihe ab') }, t('Schlüssel')),
+    h('select', { onchange: (e: Event) => (d.ruidaMagic = Number((e.target as HTMLSelectElement).value)) },
+      h('option', { value: '0', selected: !d.ruidaMagic }, t('Beim Verbinden erkennen')),
+      h('option', { value: String(0x88), selected: d.ruidaMagic === 0x88 }, t('0x88 (RDC644x, die meisten)')),
+      h('option', { value: String(0x11), selected: d.ruidaMagic === 0x11 }, t('0x11 (RDC634x)')),
+      h('option', { value: String(0x38), selected: d.ruidaMagic === 0x38 }, '0x38'),
+    ));
+  num(t('Min-Leistung in Ecken (%)'), () => d.ruidaMinPower, (v) => (d.ruidaMinPower = Math.min(100, v)),
+    t('Ruida senkt die Leistung beim Abbremsen bis auf diesen Anteil der Layer-Leistung (nur bei Leistung je Geschwindigkeit, M4). 100 = immer volle Layer-Leistung'));
+  rows.push(h('label', {}, ''), h('span', { class: 'conn-row' },
+    h('button', { class: 'btn small', title: t('Einstellungen der verbundenen Ruida-Steuerung lesen und ändern'), onclick: () => import('./ruidaDialog').then((m) => m.openRuidaSettings()) }, t('Steuerung …')),
+  ));
+  rows.push(h('div', { class: 'note wide' }, t('Mit Ruida nicht möglich: Z-Versatz im Job, Zusatzachsen als Drehachse, Ausgänge im Job, eigene G-Code-Skripte. Eine Drehachse am Y-Anschluss geht nur, solange der Job in den Y-Fahrbereich passt; sonst den Rotary-Modus der Steuerung verwenden und die Drehachse hier ausschalten. Solche Jobs lehnt KizamuBeam vor dem Senden mit einer Meldung ab. Speichern erzeugt eine .rd-Datei.')));
   head(t('G-Code-Skripte'));
   const script = (label: string, title: string, get: () => string, set: (v: string) => void) => {
     const el = h('textarea', { class: 'script', rows: 3, spellcheck: false, placeholder: t('Eine Zeile je Befehl'), oninput: (e: Event) => set((e.target as HTMLTextAreaElement).value) }) as HTMLTextAreaElement;

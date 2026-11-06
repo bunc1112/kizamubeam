@@ -14,7 +14,7 @@ import { parkedObjs } from './parking';
 
 export type StartFrom = 'absolute' | 'user' | 'current';
 
-export type Firmware = 'fluidnc' | 'grbl' | 'grblhal' | 'marlin' | 'smoothie';
+export type Firmware = 'fluidnc' | 'grbl' | 'grblhal' | 'marlin' | 'smoothie' | 'ruida';
 
 /** Was je Steuerung anders ist: Übertragung, Laserbefehle, Maschinenbefehle */
 export interface FirmwareInfo {
@@ -68,7 +68,29 @@ export const FIRMWARES: Record<Firmware, FirmwareInfo> = {
     laserOn: [], frameOn: [], footer: [],
     home: '$H', unlock: '$X', jog: relJog, setOrigin: 'G10 L20 P1 X0 Y0', clearOrigin: 'G10 L2 P1 X0 Y0', read: null, overrides: false,
   },
+  // Ruida (CO2-Steuerungen RDC644x/634x …): kein G-Code auf der Leitung. Der Treiber im Rust-Teil (src-tauri/src/ruida.rs)
+  // übersetzt den Job in eine Ruida-Datei und versteht für Bewegen, Referenzfahrt und Ursprung genau diese Zeilen.
+  ruida: {
+    label: 'Ruida (CO2, RDC644x/634x)', sMax: 1000, sync: false, realtime: true, poll: null,
+    laserOn: ['M4 S0'], frameOn: ['M3 S0'], footer: ['M5', 'M2'],
+    home: '$H', unlock: null, jog: grblJog, setOrigin: 'G10 L20 P1 X0 Y0', clearOrigin: 'G10 L2 P1 X0 Y0', read: null, overrides: false,
+  },
 };
+
+/** Nullpunkt-Ecke der Ruida-Steuerung (dort fährt sie bei der Referenzfahrt hin) */
+export type RuidaOrigin = 'tr' | 'tl' | 'br' | 'bl';
+
+/** Einstellungen für den Ruida-Treiber (machine_connect, ruida_save) */
+export function ruidaConnect(d: Device) {
+  return {
+    magic: d.ruidaMagic || 0,
+    bedW: d.bedW,
+    bedH: d.bedH,
+    origin: d.ruidaOrigin || 'tr',
+    sMax: d.sMax,
+    minPower: Math.max(0, Math.min(100, d.ruidaMinPower ?? 100)) / 100,
+  };
+}
 
 /** Achse, auf der die Drehung ausgegeben wird: Y = Rotary steckt am Y-Anschluss, sonst eine eigene Achse */
 export type RotaryAxis = 'Y' | 'Z' | 'A' | 'B' | 'C';
@@ -103,8 +125,8 @@ export interface Device {
   /** Arbeitsbereich in mm */
   bedW: number;
   bedH: number;
-  /** Verbindung: USB-Seriell oder Netzwerk (Telnet, z. B. FluidNC Port 23, oder WebSocket, FluidNC Port 81) */
-  conn: 'serial' | 'tcp' | 'ws';
+  /** Verbindung: USB-Seriell oder Netzwerk (Telnet, z. B. FluidNC Port 23, oder WebSocket, FluidNC Port 81; UDP = Ruida-Ethernet) */
+  conn: 'serial' | 'tcp' | 'ws' | 'udp';
   port: string;
   baud: number;
   host: string;
@@ -153,6 +175,12 @@ export interface Device {
   zAxis: boolean;
   /** Z+ fährt Richtung Material (z. B. Tisch hebt sich); Standard: Z+ fährt den Kopf nach oben */
   zFlip: boolean;
+  /** Ruida: Ecke des Nullpunkts der Steuerung */
+  ruidaOrigin: RuidaOrigin;
+  /** Ruida: Schlüssel zum Verwürfeln (0x88, 0x11, 0x38); 0 = beim Verbinden erkennen */
+  ruidaMagic: number;
+  /** Ruida: Min-Leistung in Ecken in % der Layer-Leistung (nur im Modus M4, der Leistung je Geschwindigkeit) */
+  ruidaMinPower: number;
 }
 
 export const DEFAULT_DEVICE: Device = {
@@ -193,6 +221,9 @@ export const DEFAULT_DEVICE: Device = {
   rotary: DEFAULT_ROTARY,
   zAxis: false,
   zFlip: false,
+  ruidaOrigin: 'tr',
+  ruidaMagic: 0,
+  ruidaMinPower: 100,
 };
 
 /**
@@ -232,6 +263,8 @@ export const PRESETS: (Partial<Device> & { name: string; fw: Firmware })[] = [
   { name: t('FluidNC-Laser (allgemein)'), fw: 'fluidnc', bedW: 400, bedH: 400 },
   { name: t('Marlin mit Laser'), fw: 'marlin', bedW: 300, bedH: 300, baud: 250000 },
   { name: t('Smoothieware-Laser'), fw: 'smoothie', bedW: 300, bedH: 200 },
+  // Ruida-Steuerungen werden ab Werk meist mit 192.168.1.100 ausgeliefert; Nullpunkt meist oben rechts
+  { name: t('Ruida-CO2-Laser (allgemein)'), fw: 'ruida', bedW: 600, bedH: 400, conn: 'udp', host: '192.168.1.100', limitSwitches: 'yes', rapid: 18000, accel: 3000 },
   // Virtuelle Maschine zum Testen ohne Hardware (vm/ im Repo, eigener Download); Ports wie dort voreingestellt
   { name: 'KizamuBeam Virtual Machine', fw: 'fluidnc', bedW: 400, bedH: 400, conn: 'tcp', host: '127.0.0.1', tcpPort: 2323, wsPort: 8181, limitSwitches: 'yes' },
 ];
@@ -1930,6 +1963,8 @@ export function frameGCode(job: Job, d: Device, contour: boolean): string[] | nu
  */
 export function pointerGCode(d: Device, on: boolean, percent: number): string[] {
   const p = Math.max(0, Math.min(10, percent));
+  // Ruida: Laser außerhalb eines Auftrags nie einschalten (die meisten CO2-Maschinen haben einen roten Zielpunkt)
+  if (d.fw === 'ruida') return on ? [] : ['M5'];
   if (d.fw === 'smoothie') return on ? [`fire ${num(p)}`] : ['fire off'];
   if (!on) return ['M5'];
   const s = sValue(p / 100, d);

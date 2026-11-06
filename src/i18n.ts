@@ -77,6 +77,18 @@ const BACKEND_PATTERNS: [RegExp, string][] = [
   [/^Port (\d+) nicht verfügbar: (.*)$/s, 'Port {port} nicht verfügbar: {error}'],
   [/^Hochladen fehlgeschlagen \(HTTP (\d+)\)(.*)$/s, 'Hochladen fehlgeschlagen (HTTP {status}){details}'],
   [/^Unbekannter Speicher „(.*)“$/, 'Unbekannter Speicher „{fs}“'],
+  // Ruida (src-tauri/core/src/ruida.rs, src-tauri/src/ruida.rs); {reason} wird selbst übersetzt
+  [/^Ruida: Zeile (\d+) \((.*)\): Ziel X (\S+) Y (\S+) mm liegt außerhalb des Arbeitsbereichs (\S+) × (\S+) mm$/s, 'Ruida: Zeile {line} ({code}): Ziel X {x} Y {y} mm liegt außerhalb des Arbeitsbereichs {w} × {h} mm'],
+  [/^Ruida: Zeile (\d+) \((.*?)\): (.*)$/s, 'Ruida: Zeile {line} ({code}): {reason}'],
+  [/^Die Ruida-Steuerung antwortet nicht mehr \((.*)\)$/s, 'Die Ruida-Steuerung antwortet nicht mehr ({error})'],
+  [/^Die Steuerung hat den Wert nicht übernommen \(gelesen: (\d+)\)$/, 'Die Steuerung hat den Wert nicht übernommen (gelesen: {value})'],
+  [/^Ruida: Keine Antwort auf Adresse (0x[0-9A-F]+)\.$/, 'Ruida: Keine Antwort auf Adresse {addr}.'],
+  [/^Ruida: Unvollständige Antwort auf Adresse (0x[0-9A-F]+)\.$/, 'Ruida: Unvollständige Antwort auf Adresse {addr}.'],
+  [/^Ziel X (\S+) Y (\S+) mm liegt außerhalb des Arbeitsbereichs$/, 'Ziel X {x} Y {y} mm liegt außerhalb des Arbeitsbereichs'],
+  [/^„(.*)“ wird beim Verfahren nicht unterstützt$/, '„{word}“ wird beim Verfahren nicht unterstützt'],
+  [/^unerwartetes Zeichen „(.*)“$/, 'unerwartetes Zeichen „{char}“'],
+  [/^Zahl fehlt nach „(.*)“$/, 'Zahl fehlt nach „{letter}“'],
+  [/^Unbekannte Aktion „(.*)“$/, 'Unbekannte Aktion „{action}“'],
 ];
 const BACKEND_MESSAGES = [
   'Ungültige Daten',
@@ -93,6 +105,37 @@ const BACKEND_MESSAGES = [
   'Kein G-Code',
   'Zeitüberschreitung beim Warten auf die Antwort',
   'Ungültige Antwort der Steuerung',
+  'Abgebrochen',
+  'Die Ruida-Steuerung antwortet nicht. IP-Adresse bzw. Schnittstelle prüfen; LightBurn oder RDWorks dürfen nicht gleichzeitig verbunden sein, und bei Ethernet muss die Firewall UDP-Port 40200 für KizamuBeam zulassen.',
+  'Die Ruida-Steuerung antwortet nicht. IP-Adresse bzw. Schnittstelle und Schlüssel prüfen; LightBurn oder RDWorks dürfen nicht gleichzeitig verbunden sein, und bei Ethernet muss die Firewall UDP-Port 40200 für KizamuBeam zulassen.',
+  'Keine Ruida-Steuerung verbunden',
+  'Während die Maschine arbeitet, lassen sich keine Einstellungen schreiben.',
+  'Wert zu groß',
+  'Ruida: Keine Bestätigung von der Steuerung (Zeitüberschreitung).',
+  'Ruida: Die Steuerung hat das Paket mehrfach abgelehnt (NAK).',
+  'Ruida: Die Steuerung hat die Anfrage mehrfach abgelehnt (NAK).',
+  'Ruida: Die Steuerung meldet einen Fehler (ERR).',
+  'Ruida: Der Auftrag enthält keine Bewegungen.',
+  'Ruida: Startpunkt liegt außerhalb des Arbeitsbereichs.',
+  'Ruida: Ein Punkt des Auftrags liegt außerhalb des Arbeitsbereichs.',
+  'Ruida: S-Wert für 100 % fehlt',
+  'Ruida: Zu viele Abschnitte (mehr als 128 Wechsel von Air Assist).',
+  'Position der Maschine unbekannt',
+  'Befehl wird mit Ruida nicht unterstützt (Konsole: $H, $J=…, G0 X Y, G10 L20/L2)',
+  'G10 nur mit L2 oder L20',
+  'G53 wird nicht unterstützt',
+  'Z lässt sich bei Ruida hier nicht verfahren (Z-Achse an der Steuerung bedienen)',
+  'Zoll (G20) wird nicht unterstützt',
+  'Z-Bewegungen im Auftrag werden mit Ruida nicht unterstützt (Z-Versatz im Layer ausschalten, Fokus an der Steuerung einstellen)',
+  'Zusatzachsen werden mit Ruida nicht unterstützt (Drehachse am Y-Anschluss verwenden oder den Rotary-Modus der Steuerung)',
+  'Digitale Ausgänge (M62–M65) gibt es bei Ruida nicht; in den Geräteeinstellungen unter „Ausgänge im Job“ entfernen',
+  'Verweilzeit (G4) wird mit Ruida nicht unterstützt',
+  'Kreisbögen (G2/G3) werden mit Ruida nicht unterstützt',
+  'Parameter wird nicht unterstützt',
+  'Befehl wird mit Ruida nicht unterstützt',
+  'relative Bewegung ohne bekannte Startposition',
+  'erste Bewegung braucht X und Y',
+  'Vorschub (F) fehlt',
 ];
 // i18n-keys-end
 
@@ -104,7 +147,8 @@ export function tBackend(msg: string): string {
     const m = re.exec(msg);
     if (!m) continue;
     const names = [...key.matchAll(/\{(\w+)\}/g)].map((x) => x[1]);
-    return t(key, Object.fromEntries(names.map((n, i) => [n, m[i + 1]])));
+    // Eingesetzte Teile können selbst Meldungen aus Rust sein (z. B. der Grund bei Ruida)
+    return t(key, Object.fromEntries(names.map((n, i) => [n, m[i + 1] === msg ? m[i + 1] : tBackend(m[i + 1])])));
   }
   return msg;
 }

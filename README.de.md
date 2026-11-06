@@ -60,7 +60,7 @@ Die **3D-Ansicht** setzt die Teile so zusammen, wie sie später gebaut werden, m
 </p>
 
 ### Den Laser steuern
-Läuft mit **FluidNC, GRBL, grblHAL, Marlin und Smoothieware**, per USB oder WLAN. Ein Einrichtungsassistent erkennt die Steuerung, prüft ihre Einstellungen und fährt einen ersten Testauftrag. Rahmen fahren, starten, pausieren, Leistung und Tempo während des Laserns anpassen, an beliebiger Stelle im Auftrag einsteigen. Vor jedem Auftrag prüft KizamuBeam, ob alles auf das Bett passt. Drehachse (Rotary), motorisierte Z-Achse und Air Assist werden unterstützt.
+Läuft mit **FluidNC, GRBL, grblHAL, Marlin, Smoothieware und Ruida (CO2)**, per USB oder WLAN. Ein Einrichtungsassistent erkennt die Steuerung, prüft ihre Einstellungen und fährt einen ersten Testauftrag. Rahmen fahren, starten, pausieren, Leistung und Tempo während des Laserns anpassen, an beliebiger Stelle im Auftrag einsteigen. Vor jedem Auftrag prüft KizamuBeam, ob alles auf das Bett passt. Drehachse (Rotary), motorisierte Z-Achse und Air Assist werden unterstützt.
 
 ### Die richtigen Einstellungen finden
 Eine Material-Bibliothek speichert bewährte Einstellungen. Materialtest, Fokustest und Passungs-Kalibrierung helfen, sie zu finden, und ein Test lässt sich direkt aus einem Foto auswerten. Je Layer: mehrere Durchgänge, Sub-Layer, Haltestege, Schnittbreitenausgleich, Perforation, Anschnitt und Leistungsrampe.

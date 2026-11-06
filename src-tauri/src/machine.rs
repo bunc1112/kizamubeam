@@ -1,5 +1,6 @@
 //! Maschinenanbindung für die Oberfläche: Verbindung über USB-Seriell, Telnet (z. B. FluidNC, Port 23) oder WebSocket (ws.rs),
 //! Ereignisse an das Fenster, Befehle aus dem Fenster an den Übertragungs-Thread (stream.rs).
+//! Ruida-Steuerungen (CO2) haben einen eigenen Treiber-Thread (ruida.rs) mit denselben Befehlen und Ereignissen.
 
 use crate::stream::{Cmd, Events, Protocol, Streamer};
 use serde::Serialize;
@@ -10,9 +11,24 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
 
+/// Übertragungs-Thread der Verbindung: G-Code-Streamer oder Ruida-Treiber
+enum Tx {
+    Stream(Sender<Cmd>),
+    Ruida(Sender<crate::ruida::Msg>),
+}
+
+impl Tx {
+    fn send(&self, c: Cmd) -> Result<(), ()> {
+        match self {
+            Tx::Stream(t) => t.send(c).map_err(|_| ()),
+            Tx::Ruida(t) => t.send(crate::ruida::Msg::Base(c)).map_err(|_| ()),
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct Machine {
-    tx: Mutex<Option<Sender<Cmd>>>,
+    tx: Mutex<Option<Tx>>,
     busy: Arc<AtomicBool>,
 }
 
@@ -21,6 +37,15 @@ impl Machine {
         let tx = self.tx.lock().unwrap();
         let tx = tx.as_ref().ok_or("Nicht verbunden")?;
         tx.send(c).map_err(|_| "Verbindung getrennt".to_string())
+    }
+
+    /// Nachricht an den Ruida-Treiber (Einstellungen, Aktionen)
+    pub(crate) fn ruida(&self, m: crate::ruida::Msg) -> Result<(), String> {
+        match self.tx.lock().unwrap().as_ref() {
+            Some(Tx::Ruida(t)) => t.send(m).map_err(|_| "Verbindung getrennt".to_string()),
+            Some(_) => Err("Keine Ruida-Steuerung verbunden".into()),
+            None => Err("Nicht verbunden".into()),
+        }
     }
 }
 
@@ -96,16 +121,43 @@ pub async fn machine_connect(
     realtime: bool,
     poll: Option<String>,
     rx_buffer: Option<usize>,
+    ruida: Option<crate::ruida::Connect>,
 ) -> Result<(), String> {
     // Ältere Oberflächen schicken keinen Puffer; unter 64 und über 16 KiB ist sicher ein Tippfehler
     let rx_buffer = rx_buffer.unwrap_or(crate::stream::RX_BUFFER).clamp(64, 16384);
     if let Some(tx) = state.tx.lock().unwrap().take() {
         let _ = tx.send(Cmd::Close);
     }
-    let (tx, rx) = channel();
+    let (tx, rx) = channel::<Cmd>();
     let busy = state.busy.clone();
     busy.store(false, Ordering::SeqCst);
     let events = WindowEvents(app);
+    // Ruida: eigener Treiber über UDP (Ethernet) oder USB
+    if let Some(rc) = ruida {
+        use crate::ruida::{open, Driver, Udp, Usb};
+        use kizamubeam_core::ruida::Framing;
+        let (tx, rx) = channel();
+        let o = rc.options.clone();
+        let magic = rc.magic;
+        match kind.as_str() {
+            "udp" => {
+                let host = host.trim().to_string();
+                let link = tauri::async_runtime::spawn_blocking(move || open(Udp::open(&host)?, Framing::Udp, magic)).await.map_err(|e| e.to_string())??;
+                std::thread::spawn(move || Driver::new(link, events, busy, o).run(rx));
+            }
+            "serial" => {
+                if port.trim().is_empty() {
+                    return Err("Keine Schnittstelle gewählt".into());
+                }
+                let name = port.trim().to_string();
+                let link = tauri::async_runtime::spawn_blocking(move || open(Usb::open(&name)?, Framing::Usb, magic)).await.map_err(|e| e.to_string())??;
+                std::thread::spawn(move || Driver::new(link, events, busy, o).run(rx));
+            }
+            _ => return Err(format!("Unbekannte Verbindungsart „{kind}“")),
+        }
+        *state.tx.lock().unwrap() = Some(Tx::Ruida(tx));
+        return Ok(());
+    }
     match kind.as_str() {
         "serial" => {
             if port.trim().is_empty() {
@@ -133,7 +185,7 @@ pub async fn machine_connect(
         }
         _ => return Err(format!("Unbekannte Verbindungsart „{kind}“")),
     }
-    *state.tx.lock().unwrap() = Some(tx);
+    *state.tx.lock().unwrap() = Some(Tx::Stream(tx));
     Ok(())
 }
 

@@ -6,6 +6,7 @@ mod machine;
 mod native;
 mod netcam;
 mod packs;
+mod ruida;
 mod serial_transport;
 mod stream;
 mod sync;
@@ -200,6 +201,10 @@ pub fn run() {
             machine::machine_pause,
             machine::machine_resume,
             machine::machine_stop,
+            ruida::ruida_read,
+            ruida::ruida_write,
+            ruida::ruida_action,
+            ruida::ruida_save,
             fluid::fluid_upload,
             fluid::fluid_discover,
             agent::agent_info,
